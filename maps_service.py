@@ -4,6 +4,7 @@ Google Maps service: computes travel distances/durations between the user's
 location and candidate hospitals.
 """
 
+import logging
 from typing import Any
 
 import googlemaps
@@ -11,7 +12,30 @@ import requests
 
 from config import GOOGLE_MAPS_API_KEY
 
+logger = logging.getLogger(__name__)
+
 ROUTES_API_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
+STATIC_MAP_URL = "https://maps.googleapis.com/maps/api/staticmap"
+
+# Map styling that matches the ERoute palette (cream land, light-blue water,
+# white roads, navy labels). Requires the "Maps Static API" to be enabled.
+_MAP_STYLE = [
+    "element:geometry|color:0xFFF8F2",
+    "element:labels.icon|visibility:off",
+    "element:labels.text.fill|color:0x0E425F",
+    "element:labels.text.stroke|color:0xFFF8F2",
+    "feature:administrative|element:geometry|visibility:off",
+    "feature:poi|visibility:off",
+    "feature:poi.medical|visibility:on",
+    "feature:poi.medical|element:geometry|color:0xF3D6D6",
+    "feature:poi.park|element:geometry|color:0xE3EEE4",
+    "feature:road|element:geometry|color:0xFFFFFF",
+    "feature:road|element:geometry.stroke|color:0xEBEBEB",
+    "feature:road.highway|element:geometry|color:0xE6EEF5",
+    "feature:transit|visibility:off",
+    "feature:water|element:geometry|color:0xA3C1DA",
+    "feature:water|element:labels.text.fill|color:0x0E425F",
+]
 
 
 def _get_gmaps_client() -> googlemaps.Client:
@@ -165,3 +189,41 @@ def rank_hospitals_by_distance(
 
     ranked.sort(key=lambda h: h.get("duration_seconds", float("inf")))
     return ranked
+
+
+def get_static_map(
+    hospital: dict[str, Any],
+    width: int = 640,
+    height: int = 300,
+    zoom: int = 15,
+) -> bytes | None:
+    """
+    Render a styled map (PNG bytes) centred on ``hospital`` with a red pin. Returns None if the map cannot be produced; the
+    map is a nice-to-have and must never break the answer.
+    """
+    if not GOOGLE_MAPS_API_KEY:
+        return None
+
+    params: list[tuple[str, str]] = [
+        ("size", f"{width}x{height}"),
+        ("scale", "1"),
+        ("format", "png"),
+        ("maptype", "roadmap"),
+    ]
+
+    # The user's exact position is unknown, so the map shows only the hospital.
+    location = f"{hospital['latitude']},{hospital['longitude']}"
+    params.append(("center", location))
+    params.append(("zoom", str(zoom)))
+    params.append(("markers", f"color:0xCC0000|{location}"))
+    params.extend(("style", rule) for rule in _MAP_STYLE)
+    params.append(("key", GOOGLE_MAPS_API_KEY))
+
+    response = requests.get(STATIC_MAP_URL, params=params, timeout=20)
+    if not response.ok or not response.headers.get("Content-Type", "").startswith("image"):
+        logger.warning(
+            "Static map request failed (%s): %s",
+            response.status_code, response.text[:200],
+        )
+        return None
+    return response.content

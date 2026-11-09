@@ -16,7 +16,7 @@ from langgraph.graph import StateGraph, END
 
 from config import GEMINI_API_KEY, GEMINI_MODEL, ALL_RESOURCES
 from sheets_service import fetch_all_hospitals, find_hospitals_with_resources
-from maps_service import rank_hospitals_by_distance
+from maps_service import get_static_map, rank_hospitals_by_distance
 
 logger = logging.getLogger(__name__)
 
@@ -321,11 +321,15 @@ def build_graph() -> StateGraph:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-def run_agent(user_input: str) -> str:
+def run_agent_detailed(user_input: str) -> dict[str, Any]:
     """
     Run the full ERoute pipeline on a single user query.
 
-    Returns the final response string.
+    Returns a dict with:
+      text      – the final response string
+      hospital  – the recommended (nearest) hospital dict, or None
+      origin    – the user's location text
+      map_png   – PNG bytes of a styled route map, or None
     """
     app = build_graph()
     initial_state: AgentState = {
@@ -340,4 +344,24 @@ def run_agent(user_input: str) -> str:
         "final_response": "",
     }
     result = app.invoke(initial_state)
-    return result["final_response"]
+
+    ranked = result.get("ranked_hospitals") or []
+    top = ranked[0] if ranked else None
+    map_png = None
+    if top:
+        try:
+            map_png = get_static_map(top)
+        except Exception:
+            logger.exception("Could not render the route map")
+
+    return {
+        "text": result["final_response"],
+        "hospital": top,
+        "origin": result.get("user_location", ""),
+        "map_png": map_png,
+    }
+
+
+def run_agent(user_input: str) -> str:
+    """Convenience wrapper that returns only the response text."""
+    return run_agent_detailed(user_input)["text"]
