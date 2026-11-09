@@ -184,7 +184,3 @@ every resource selected for the concern is currently marked available.
   recommendation.
 - The current application is designed for local desktop use with Tkinter.
 
-## 📄 License
-
-No license has been specified yet. Add a license before distributing ERoute
-outside the project team.
