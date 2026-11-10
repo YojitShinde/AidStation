@@ -1,11 +1,17 @@
 <div align="center">
 
-# 🏥 ERoute
+# 🏥 AidStation
 
-### Emergency hospital routing, powered by AI
+### AI-powered medical emergency response
 
-Describe the medical concern, share the location, and ERoute identifies the
-closest hospital with the required emergency resources.
+AidStation contains two coordinated emergency-response modules:
+
+- **ERoute** identifies the closest hospital with the emergency resources
+  required for a described concern and provides a route.
+- **AidPilot** is a retrieval-augmented paramedic assistant. It grounds
+  practical, procedural answers in selected Wilderness Medical Society (WMS)
+  documents. The supplied WMS documents are enabled by default; sources can be
+  viewed, added, or removed from the left-hand source panel.
 
 <br>
 
@@ -38,6 +44,13 @@ It:
 > **Safety first:** ERoute is a routing aid, not a medical diagnosis or a
 > replacement for emergency services. In a life-threatening emergency, call
 > **112** immediately.
+
+## 🖥️ Modules
+
+The desktop application has two consistent tabs: **ERoute** for hospital
+routing and **AidPilot** for source-grounded field guidance. Both modules show
+the emergency-services notice; AidPilot also reminds users when selected
+documents do not support an answer.
 
 ## 🖥️ Screenshots
 
@@ -138,7 +151,7 @@ Required Google Cloud APIs:
 The hospital workbook is configured in `config.py` and is read through its
 public CSV export.
 
-### 4. Run ERoute
+### 4. Run AidStation
 
 ```powershell
 python main.py
@@ -183,4 +196,3 @@ every resource selected for the concern is currently marked available.
 - API quotas, billing, network failures, or unavailable routes can prevent a
   recommendation.
 - The current application is designed for local desktop use with Tkinter.
-

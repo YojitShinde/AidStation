@@ -12,12 +12,15 @@ import threading
 import tkinter as tk
 import webbrowser
 from io import BytesIO
-from tkinter import ttk
+from pathlib import Path
+from tkinter import filedialog, ttk
 from typing import Any
 
 from PIL import Image, ImageOps, ImageTk
 
 from agent import run_agent_detailed
+from aid_pilot import ask as ask_aid_pilot
+from aid_pilot import default_sources, read_source
 from location_service import DeviceLocation, get_device_location
 from maps_service import directions_url, get_route_map
 
@@ -41,7 +44,7 @@ EMERGENCY_NOTE = "For a life-threatening situation, call 112 immediately."
 class ERouteApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("ERoute – Emergency Hospital Routing")
+        self.root.title("AidStation – AI-Powered Medical Emergency Response Application")
         self.root.geometry("1320x800")
         self.root.minsize(1060, 640)
         self.root.configure(bg=CREAM)
@@ -55,11 +58,13 @@ class ERouteApp:
         self._map_cache: dict[str, bytes | None] = {}
         self._map_photo: ImageTk.PhotoImage | None = None
         self._resize_job: str | None = None
+        self._aid_sources = default_sources()
+        self._aid_busy = False
 
         self.root.grid_columnconfigure(0, weight=1)
         self.root.grid_rowconfigure(1, weight=1)
         self._build_header()
-        self._build_body()
+        self._build_tabs()
         self._build_footer()
 
         self._set_location_label(None, locating=True)
@@ -76,20 +81,30 @@ class ERouteApp:
         header = tk.Frame(self.root, bg=WHITE, highlightthickness=1,
                           highlightbackground=BORDER)
         header.grid(row=0, column=0, sticky="ew")
-        tk.Label(header, text="🏥 ERoute", font=(FONT, 22, "bold"),
+        tk.Label(header, text="🏥 AidStation", font=(FONT, 22, "bold"),
                  fg=RED, bg=WHITE).pack(side="left", padx=20, pady=10)
 
         right = tk.Frame(header, bg=WHITE)
         right.pack(side="right", padx=20)
-        tk.Label(right, text="Finding the right emergency room, fast",
+        tk.Label(right, text="AI-powered medical emergency response",
                  font=(FONT, 11, "bold"), fg=MUTED, bg=WHITE).pack(anchor="e")
         self.location_label = tk.Label(right, text="", font=(FONT, 10),
                                        bg=WHITE, fg=MUTED)
         self.location_label.pack(anchor="e")
 
-    def _build_body(self) -> None:
-        body = tk.Frame(self.root, bg=CREAM)
-        body.grid(row=1, column=0, sticky="nsew")
+    def _build_tabs(self) -> None:
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.grid(row=1, column=0, sticky="nsew", padx=12, pady=(10, 0))
+        self.eroute_tab = tk.Frame(self.notebook, bg=CREAM)
+        self.aidpilot_tab = tk.Frame(self.notebook, bg=CREAM)
+        self.notebook.add(self.eroute_tab, text="  ERoute  ")
+        self.notebook.add(self.aidpilot_tab, text="  AidPilot  ")
+        self._build_eroute_tab()
+        self._build_aidpilot_tab()
+
+    def _build_eroute_tab(self) -> None:
+        body = tk.Frame(self.eroute_tab, bg=CREAM)
+        body.pack(fill="both", expand=True)
         body.grid_rowconfigure(0, weight=1)
         body.grid_columnconfigure(1, weight=1)
 
@@ -187,6 +202,137 @@ class ERouteApp:
         self.map_label.place(x=0, y=0, relwidth=1, relheight=1)
         self.map_container.bind("<Configure>", self._on_map_resize)
 
+    def _build_aidpilot_tab(self) -> None:
+        tab = self.aidpilot_tab
+        tab.grid_columnconfigure(1, weight=1)
+        tab.grid_rowconfigure(0, weight=1)
+
+        sources = tk.Frame(tab, bg=WHITE, highlightthickness=1,
+                           highlightbackground=BORDER, width=320)
+        sources.grid(row=0, column=0, sticky="ns", padx=(2, 8), pady=12)
+        sources.grid_propagate(False)
+        tk.Label(sources, text="Knowledge sources", font=(FONT, 13, "bold"),
+                 fg=NAVY, bg=WHITE, anchor="w").pack(fill="x", padx=14, pady=(14, 2))
+        tk.Label(sources, text="WMS documents used to ground responses",
+                 font=(FONT, 9), fg=MUTED, bg=WHITE, anchor="w").pack(
+                     fill="x", padx=14, pady=(0, 10))
+        source_frame = tk.Frame(sources, bg=WHITE)
+        source_frame.pack(fill="both", expand=True, padx=10)
+        self.source_list = tk.Listbox(source_frame, font=(FONT, 10), relief="flat",
+                                      activestyle="none", selectbackground=BLUSH,
+                                      selectforeground=NAVY, bg=CREAM,
+                                      highlightthickness=0)
+        source_scroll = ttk.Scrollbar(source_frame, command=self.source_list.yview)
+        self.source_list.configure(yscrollcommand=source_scroll.set)
+        self.source_list.pack(side="left", fill="both", expand=True)
+        source_scroll.pack(side="right", fill="y")
+        self.source_list.bind("<Double-Button-1>", lambda _e: self._view_source())
+        actions = tk.Frame(sources, bg=WHITE)
+        actions.pack(fill="x", padx=12, pady=12)
+        for text, command in (("View", self._view_source),
+                              ("Add", self._add_source),
+                              ("Remove", self._remove_source)):
+            tk.Button(actions, text=text, command=command, font=(FONT, 9),
+                      bg=NAVY if text == "Add" else CREAM, fg=WHITE if text == "Add" else NAVY,
+                      activebackground=BLUSH, relief="flat", padx=8, pady=4,
+                      cursor="hand2").pack(side="left", padx=(0, 5))
+
+        chat = tk.Frame(tab, bg=CREAM)
+        chat.grid(row=0, column=1, sticky="nsew", pady=12)
+        chat.grid_columnconfigure(0, weight=1)
+        chat.grid_rowconfigure(1, weight=1)
+        tk.Label(chat, text="AidPilot", font=(FONT, 18, "bold"),
+                 fg=NAVY, bg=CREAM, anchor="w").grid(row=0, column=0, sticky="w")
+        tk.Label(chat, text="Describe what is happening. Responses are grounded in the selected WMS sources.",
+                 font=(FONT, 10), fg=MUTED, bg=CREAM, anchor="w").grid(row=0, column=0, sticky="e")
+        self.aid_chat = tk.Text(chat, font=(FONT, 11), wrap="word", state="disabled",
+                                relief="flat", bg=WHITE, fg="#222222",
+                                highlightthickness=1, highlightbackground=BORDER,
+                                padx=14, pady=12)
+        self.aid_chat.grid(row=1, column=0, sticky="nsew", pady=(8, 8))
+        composer = tk.Frame(chat, bg=CREAM)
+        composer.grid(row=2, column=0, sticky="ew")
+        composer.grid_columnconfigure(0, weight=1)
+        self.aid_input = tk.Text(composer, height=3, font=(FONT, 11), wrap="word",
+                                 relief="flat", bg=WHITE, fg="black",
+                                 highlightthickness=1, highlightbackground=BORDER,
+                                 padx=8, pady=6)
+        self.aid_input.grid(row=0, column=0, sticky="ew")
+        self.aid_input.bind("<Return>", self._on_aid_enter)
+        tk.Button(composer, text="Ask AidPilot", command=self._submit_aid,
+                  font=(FONT, 10, "bold"), bg=RED, fg=WHITE, relief="flat",
+                  activebackground="#A30000", activeforeground=WHITE,
+                  padx=12, pady=7, cursor="hand2").grid(row=0, column=1, padx=(8, 0))
+        self._refresh_sources()
+
+    def _refresh_sources(self) -> None:
+        self.source_list.delete(0, "end")
+        for source in self._aid_sources:
+            self.source_list.insert("end", source.name.replace("wms_", "").replace("_", " "))
+
+    def _selected_source(self) -> Path | None:
+        selection = self.source_list.curselection()
+        return self._aid_sources[selection[0]] if selection else None
+
+    def _view_source(self) -> None:
+        source = self._selected_source()
+        if source is None:
+            return
+        window = tk.Toplevel(self.root)
+        window.title(f"AidPilot source – {source.name}")
+        window.geometry("760x600")
+        text = tk.Text(window, wrap="word", font=(FONT, 10), padx=12, pady=12)
+        text.pack(fill="both", expand=True)
+        try:
+            text.insert("1.0", read_source(source))
+        except Exception as exc:
+            text.insert("1.0", f"Could not read source: {exc}")
+        text.configure(state="disabled")
+
+    def _add_source(self) -> None:
+        selected = filedialog.askopenfilename(
+            title="Add a WMS source", filetypes=[("PDF documents", "*.pdf")]
+        )
+        if selected:
+            path = Path(selected)
+            if path not in self._aid_sources:
+                self._aid_sources.append(path)
+                self._refresh_sources()
+
+    def _remove_source(self) -> None:
+        selection = self.source_list.curselection()
+        if selection:
+            del self._aid_sources[selection[0]]
+            self._refresh_sources()
+
+    def _on_aid_enter(self, _event: tk.Event) -> str:
+        self._submit_aid()
+        return "break"
+
+    def _submit_aid(self) -> None:
+        question = self.aid_input.get("1.0", "end").strip()
+        if not question or getattr(self, "_aid_busy", False):
+            return
+        self._aid_busy = True
+        self._append_aid("You", question)
+        self.aid_input.delete("1.0", "end")
+        self._append_aid("AidPilot", "Thinking from the selected WMS sources…")
+        threading.Thread(target=self._aid_worker, args=(question, list(self._aid_sources)),
+                         daemon=True).start()
+
+    def _aid_worker(self, question: str, sources: list[Path]) -> None:
+        try:
+            self._queue.put(("aid_result", ask_aid_pilot(question, sources)))
+        except Exception as exc:
+            logger.exception("AidPilot failed")
+            self._queue.put(("aid_error", str(exc) or exc.__class__.__name__))
+
+    def _append_aid(self, speaker: str, text: str) -> None:
+        self.aid_chat.configure(state="normal")
+        self.aid_chat.insert("end", f"{speaker}\n{text}\n\n")
+        self.aid_chat.configure(state="disabled")
+        self.aid_chat.see("end")
+
     def _build_footer(self) -> None:
         tk.Label(
             self.root,
@@ -258,6 +404,10 @@ class ERouteApp:
                     self._on_error(payload[0])
                 elif kind == "map":
                     self._on_map(payload[0], payload[1])
+                elif kind == "aid_result":
+                    self._on_aid_result(payload[0])
+                elif kind == "aid_error":
+                    self._on_aid_error(payload[0])
         except queue.Empty:
             pass
         self.root.after(100, self._poll_queue)
@@ -269,6 +419,24 @@ class ERouteApp:
         if loc is not None:
             self._origin = loc
         self._set_location_label(loc)
+
+    def _on_aid_result(self, response: str) -> None:
+        self._aid_busy = False
+        self._remove_last_aid_thinking()
+        self._append_aid("AidPilot", response)
+
+    def _on_aid_error(self, message: str) -> None:
+        self._aid_busy = False
+        self._remove_last_aid_thinking()
+        self._append_aid("AidPilot", f"⚠️ {message}")
+
+    def _remove_last_aid_thinking(self) -> None:
+        self.aid_chat.configure(state="normal")
+        content = self.aid_chat.get("1.0", "end-1c")
+        marker = "AidPilot\nThinking from the selected WMS sources…\n\n"
+        if content.endswith(marker):
+            self.aid_chat.delete(f"end-{len(marker)}c", "end-1c")
+        self.aid_chat.configure(state="disabled")
 
     def _on_error(self, message: str) -> None:
         self._finish_request()
