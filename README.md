@@ -23,35 +23,6 @@ AidStation contains two coordinated emergency-response modules:
 
 </div>
 
----
-
-## ✨ What it does
-
-MediRoute is an AI-assisted emergency-room finder for situations where the right
-hospital matters as much as the nearest hospital.
-
-It:
-
-- Understands the patient's concern and extracts their location with Gemini.
-- Maps symptoms to required hospital resources such as ICU, Cardiology,
-  Ventilator, CT Scanner, or Obstetrics.
-- Reads live hospital resource data from a public Google Sheets workbook.
-- Filters out hospitals that do not have **all** required resources.
-- Uses the Google Routes API to rank candidates by driving time.
-- Presents the recommendation with hospital name, address, phone, distance,
-  travel time, and an interactive map card.
-
-> **Safety first:** MediRoute is a routing aid, not a medical diagnosis or a
-> replacement for emergency services. In a life-threatening emergency, call
-> **112** immediately.
-
-## 🖥️ Modules
-
-The desktop application has two consistent tabs: **MediRoute** for hospital
-routing and **MediPilot** for source-grounded field guidance. Both modules show
-the emergency-services notice; MediPilot also reminds users when selected
-documents do not support an answer.
-
 ## 🖥️ Screenshots
 
 ### MediRoute
