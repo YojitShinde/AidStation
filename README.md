@@ -2,7 +2,7 @@
 
 # 🏥 AidStation
 
-### AI-powered medical emergency response
+### AI-powered medical emergency response application
 
 AidStation contains two coordinated emergency-response modules:
 
