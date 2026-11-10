@@ -45,22 +45,13 @@ AidStation contains two coordinated emergency-response modules:
   <img src="assets/MediPilot-ss2.png" alt="MediPilot source-grounded assistant screen" width="900">
 </p>
 
-## 🔁 Agent workflows
+## 🔁 Workflows
 
 ### MediRoute workflow
 
 <p align="center">
   <img src="assets/MediRoute-Workflow.png" alt="MediRoute agent workflow" width="100%">
 </p>
-
-| Stage | Responsibility |
-|---|---|
-| **1. User input** | Receive medical concern and current location |
-| **2. Resource analysis** | Gemini identifies the concern and required services |
-| **3. Hospital data** | Fetch resource availability from Google Sheets |
-| **4. Resource filtering** | Keep hospitals that satisfy every required resource |
-| **5. Route calculation** | Google Routes API estimates driving distance and time |
-| **6. Recommendation** | Return the quickest suitable hospital and alternatives |
 
 ### MediPilot workflow
 
