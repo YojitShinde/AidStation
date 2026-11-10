@@ -12,6 +12,11 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")
 
+# --- Device location ---
+# Optional "lat,lng" override (e.g. ERROUTE_LOCATION=19.1197,72.8464). Handy for
+# desktops without a location sensor and for testing. Leave empty to auto-detect.
+LOCATION_OVERRIDE = os.getenv("ERROUTE_LOCATION", "").strip()
+
 # --- Google Sheets ---
 SPREADSHEET_ID = "1xnacTzOjde2rJom3yfjzA7MCmyjuw2euvm7_iXmDhJ8"
 

@@ -1,7 +1,8 @@
 """
 ERoute - ER Assistant
-LangGraph agent: orchestrates Gemini for medical analysis, sheets for
-hospital resource matching, and Google Maps for routing.
+LangGraph agent: orchestrates Gemini for medical analysis, Google Sheets for
+hospital resource matching, and Google Maps for routing from the device's
+current location.
 """
 
 from __future__ import annotations
@@ -15,10 +16,16 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, END
 
 from config import GEMINI_API_KEY, GEMINI_MODEL, ALL_RESOURCES
+from location_service import DeviceLocation
 from sheets_service import fetch_all_hospitals, find_hospitals_with_resources
-from maps_service import get_static_map, rank_hospitals_by_distance
+from maps_service import geocode_location, rank_hospitals_by_distance
 
 logger = logging.getLogger(__name__)
+
+NO_LOCATION_MSG = (
+    "Your location could not be determined. Turn on Location Services for this "
+    "device (Windows: Settings → Privacy & security → Location) and try again."
+)
 
 
 def _response_text(content: Any) -> str:
@@ -46,15 +53,15 @@ def _response_text(content: Any) -> str:
 # ---------------------------------------------------------------------------
 class AgentState(TypedDict):
     """State that flows through the LangGraph nodes."""
-    user_input: str                       # Raw user prompt
-    medical_concern: str                  # Extracted medical concern
-    user_location: str                    # Extracted user location
-    required_resources: list[str]         # Resources needed (determined by LLM)
-    all_hospitals: list[dict[str, Any]]   # All hospitals fetched from Sheets
+    user_input: str                           # Raw user prompt
+    origin: DeviceLocation | None             # Device location (GPS etc.)
+    medical_concern: str                      # Extracted medical concern
+    user_location: str                        # Location mentioned in text (fallback only)
+    required_resources: list[str]             # Resources needed (determined by LLM)
+    all_hospitals: list[dict[str, Any]]       # All hospitals fetched from Sheets
     matching_hospitals: list[dict[str, Any]]  # Hospitals with required resources
-    ranked_hospitals: list[dict[str, Any]]    # Hospitals sorted by distance
-    routing_error: str                         # Maps error, if routing failed
-    final_response: str                   # Final formatted answer
+    ranked_hospitals: list[dict[str, Any]]    # Hospitals sorted by travel time
+    routing_error: str                        # Location/Maps error, if any
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +86,7 @@ def analyze_medical_concern(state: AgentState) -> dict:
     """
     Use Gemini to:
     1. Extract the medical concern.
-    2. Extract the user's location.
+    2. Pick up a location only if the user happened to mention one.
     3. Determine which hospital resources are required.
     """
     llm = _get_llm()
@@ -94,7 +101,7 @@ Available hospital resources:
 Respond ONLY with a valid JSON object (no markdown, no explanation) with
 exactly these keys:
 - "medical_concern": a short summary of the patient's medical issue
-- "user_location": the location the patient mentioned
+- "user_location": the location the patient mentioned, or "" if none was mentioned
 - "required_resources": a list of resource names (from the available list above)
   that the patient would likely need
 
@@ -148,8 +155,8 @@ Important guidelines for resource selection:
         required_resources.insert(0, "Emergency Department")
 
     return {
-        "medical_concern": parsed.get("medical_concern", state["user_input"]),
-        "user_location": str(parsed.get("user_location", "")).strip(),
+        "medical_concern": parsed.get("medical_concern") or state["user_input"],
+        "user_location": str(parsed.get("user_location") or "").strip(),
         "required_resources": required_resources,
     }
 
@@ -159,15 +166,14 @@ Important guidelines for resource selection:
 # ---------------------------------------------------------------------------
 def fetch_hospital_data(_state: AgentState) -> dict:
     """Fetch all hospital data from the Google Sheets spreadsheet."""
-    hospitals = fetch_all_hospitals()
-    return {"all_hospitals": hospitals}
+    return {"all_hospitals": fetch_all_hospitals()}
 
 
 # ---------------------------------------------------------------------------
 # Node 3: Filter hospitals by required resources
 # ---------------------------------------------------------------------------
 def filter_hospitals(state: AgentState) -> dict:
-    """Filter hospitals to only those with all required resources available."""
+    """Keep only hospitals with all required resources available."""
     matching = find_hospitals_with_resources(
         state["all_hospitals"],
         state["required_resources"],
@@ -176,123 +182,41 @@ def filter_hospitals(state: AgentState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Node 4: Rank hospitals by distance via Google Maps
+# Node 4: Rank hospitals by travel time from the device location
 # ---------------------------------------------------------------------------
 def rank_by_distance(state: AgentState) -> dict:
-    """Rank the matching hospitals by travel time from the user's location."""
+    """Rank the matching hospitals by driving time from the user's location."""
     if not state["matching_hospitals"]:
-        return {"ranked_hospitals": []}
+        return {"ranked_hospitals": [], "routing_error": ""}
 
-    user_loc = state["user_location"]
-    if not user_loc:
-        return {
-            "ranked_hospitals": [],
-            "routing_error": (
-                "A location is required to calculate the nearest hospital. "
-                "Please include your current area or address."
-            ),
-        }
+    origin = state["origin"]
+
+    # Fallback: device location unavailable, but the user mentioned a place.
+    if origin is None and state["user_location"]:
+        try:
+            lat, lng = geocode_location(state["user_location"])
+            origin = DeviceLocation(lat, lng, None, "mentioned")
+        except Exception:
+            logger.exception("Could not geocode the location mentioned by the user")
+
+    if origin is None:
+        return {"ranked_hospitals": [], "routing_error": NO_LOCATION_MSG}
 
     try:
-        ranked = rank_hospitals_by_distance(user_loc, state["matching_hospitals"])
+        ranked = rank_hospitals_by_distance(
+            (origin.latitude, origin.longitude), state["matching_hospitals"]
+        )
     except Exception:
         logger.exception("Google Maps ranking failed")
         return {
+            "origin": origin,
             "ranked_hospitals": [],
             "routing_error": (
                 "Google Maps could not calculate travel times. "
-                "Please verify the location and Maps API configuration."
+                "Please check your connection and the Maps API configuration."
             ),
         }
-
-    if not ranked:
-        return {
-            "ranked_hospitals": [],
-            "routing_error": "No candidate hospital could be reached from the provided location.",
-        }
-    return {"ranked_hospitals": ranked, "routing_error": ""}
-
-
-# ---------------------------------------------------------------------------
-# Node 5: Generate the final response with Gemini
-# ---------------------------------------------------------------------------
-def generate_response(state: AgentState) -> dict:
-    """Use Gemini to compose a helpful, human-readable response."""
-    if state["routing_error"]:
-        return {
-            "final_response": (
-                f"⚠️ {state['routing_error']}\n\n"
-                f"**Medical Concern:** {state['medical_concern']}\n"
-                f"**Required Resources:** {', '.join(state['required_resources'])}\n\n"
-                "Please call emergency services (112) immediately if this is life-threatening."
-            )
-        }
-
-    if not state["ranked_hospitals"]:
-        # No hospitals matched — inform the user
-        no_match_msg = (
-            "⚠️ Sorry, none of the hospitals in our database currently have "
-            "all the required resources available for your medical concern.\n\n"
-            f"**Medical Concern:** {state['medical_concern']}\n"
-            f"**Required Resources:** {', '.join(state['required_resources'])}\n\n"
-            "Please call emergency services (112) immediately."
-        )
-        return {"final_response": no_match_msg}
-
-    llm = _get_llm()
-
-    # Build context for Gemini
-    hospital_summaries = []
-    for i, h in enumerate(state["ranked_hospitals"], 1):
-        entry = (
-            f"Hospital {i}:\n"
-            f"  Name: {h['name']}\n"
-            f"  Address: {h['address']}\n"
-            f"  Phone: {h['phone']}\n"
-        )
-        if "distance" in h:
-            entry += f"  Distance: {h['distance']}\n"
-        if "duration" in h:
-            entry += f"  Travel Time: {h['duration']}\n"
-
-        # Available resources
-        avail = [
-            r for r, info in h.get("resources", {}).items()
-            if info.get("available")
-        ]
-        entry += f"  Available Resources: {', '.join(avail)}\n"
-        hospital_summaries.append(entry)
-
-    context = "\n".join(hospital_summaries)
-
-    system_prompt = """You are ERoute, an emergency room assistant helping
-patients find the nearest hospital. Given the patient's medical concern,
-required resources, and ranked hospital information, compose a clear,
-empathetic, and actionable response.
-
-Format your response with:
-1. A brief acknowledgement of the patient's concern.
-2. Your recommendation (the nearest/quickest hospital).
-3. Hospital details (Name, Address, Phone, Distance, Travel Time).
-4. If there are alternative hospitals, list them briefly.
-5. A reminder to call emergency services (112) if the situation is critical.
-
-Keep the response concise and easy to read. Use emojis sparingly for visual cues."""
-
-    user_msg = f"""Patient's Concern: {state['medical_concern']}
-Location: {state['user_location']}
-Required Resources: {', '.join(state['required_resources'])}
-
-Ranked Hospitals (nearest first):
-{context}"""
-
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=user_msg),
-    ]
-
-    response = llm.invoke(messages)
-    return {"final_response": _response_text(response.content)}
+    return {"origin": origin, "ranked_hospitals": ranked, "routing_error": ""}
 
 
 # ---------------------------------------------------------------------------
@@ -306,14 +230,12 @@ def build_graph() -> StateGraph:
     graph.add_node("fetch_data", fetch_hospital_data)
     graph.add_node("filter", filter_hospitals)
     graph.add_node("rank", rank_by_distance)
-    graph.add_node("respond", generate_response)
 
     graph.set_entry_point("analyze")
     graph.add_edge("analyze", "fetch_data")
     graph.add_edge("fetch_data", "filter")
     graph.add_edge("filter", "rank")
-    graph.add_edge("rank", "respond")
-    graph.add_edge("respond", END)
+    graph.add_edge("rank", END)
 
     return graph.compile()
 
@@ -321,19 +243,26 @@ def build_graph() -> StateGraph:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-def run_agent_detailed(user_input: str) -> dict[str, Any]:
+def run_agent_detailed(
+    user_input: str,
+    origin: DeviceLocation | None = None,
+) -> dict[str, Any]:
     """
-    Run the full ERoute pipeline on a single user query.
+    Run the full ERoute pipeline for one query.
 
     Returns a dict with:
-      text      – the final response string
-      hospital  – the recommended (nearest) hospital dict, or None
-      origin    – the user's location text
-      map_png   – PNG bytes of a styled route map, or None
+      concern             – short summary of the medical concern
+      required_resources  – resources the hospital must have
+      hospitals           – matching hospitals, nearest first. Each has name,
+                            address, phone, distance, duration, polyline, lat/lng
+      origin              – the DeviceLocation actually used (or None)
+      error               – user-facing error text ("" if none)
+      no_match            – True if no hospital has every required resource
     """
     app = build_graph()
     initial_state: AgentState = {
         "user_input": user_input,
+        "origin": origin,
         "medical_concern": "",
         "user_location": "",
         "required_resources": [],
@@ -341,27 +270,14 @@ def run_agent_detailed(user_input: str) -> dict[str, Any]:
         "matching_hospitals": [],
         "ranked_hospitals": [],
         "routing_error": "",
-        "final_response": "",
     }
     result = app.invoke(initial_state)
 
-    ranked = result.get("ranked_hospitals") or []
-    top = ranked[0] if ranked else None
-    map_png = None
-    if top:
-        try:
-            map_png = get_static_map(top)
-        except Exception:
-            logger.exception("Could not render the route map")
-
     return {
-        "text": result["final_response"],
-        "hospital": top,
-        "origin": result.get("user_location", ""),
-        "map_png": map_png,
+        "concern": result["medical_concern"],
+        "required_resources": result["required_resources"],
+        "hospitals": result["ranked_hospitals"],
+        "origin": result.get("origin"),
+        "error": result["routing_error"],
+        "no_match": not result["matching_hospitals"],
     }
-
-
-def run_agent(user_input: str) -> str:
-    """Convenience wrapper that returns only the response text."""
-    return run_agent_detailed(user_input)["text"]
