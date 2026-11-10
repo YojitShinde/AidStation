@@ -6,9 +6,9 @@
 
 AidStation contains two coordinated emergency-response modules:
 
-- **ERoute** identifies the closest hospital with the emergency resources
+- **MediRoute** identifies the closest hospital with the emergency resources
   required for a described concern and provides a route.
-- **AidPilot** is a retrieval-augmented paramedic assistant. It grounds
+- **MediPilot** is a retrieval-augmented paramedic assistant. It grounds
   practical, procedural answers in selected Wilderness Medical Society (WMS)
   documents. The supplied WMS documents are enabled by default; sources can be
   viewed, added, or removed from the left-hand source panel.
@@ -27,7 +27,7 @@ AidStation contains two coordinated emergency-response modules:
 
 ## ✨ What it does
 
-ERoute is an AI-assisted emergency-room finder for situations where the right
+MediRoute is an AI-assisted emergency-room finder for situations where the right
 hospital matters as much as the nearest hospital.
 
 It:
@@ -41,35 +41,45 @@ It:
 - Presents the recommendation with hospital name, address, phone, distance,
   travel time, and an interactive map card.
 
-> **Safety first:** ERoute is a routing aid, not a medical diagnosis or a
+> **Safety first:** MediRoute is a routing aid, not a medical diagnosis or a
 > replacement for emergency services. In a life-threatening emergency, call
 > **112** immediately.
 
 ## 🖥️ Modules
 
-The desktop application has two consistent tabs: **ERoute** for hospital
-routing and **AidPilot** for source-grounded field guidance. Both modules show
-the emergency-services notice; AidPilot also reminds users when selected
+The desktop application has two consistent tabs: **MediRoute** for hospital
+routing and **MediPilot** for source-grounded field guidance. Both modules show
+the emergency-services notice; MediPilot also reminds users when selected
 documents do not support an answer.
 
 ## 🖥️ Screenshots
 
-### Welcome screen
+### MediRoute
 
 <p align="center">
-  <img src="assets/ss-1.png" alt="ERoute welcome screen" width="900">
+  <img src="assets/MediRoute-ss1.png" alt="MediRoute hospital routing screen" width="900">
 </p>
 
-### Hospital recommendation
-
 <p align="center">
-  <img src="assets/ss-2.png" alt="ERoute hospital recommendation with map" width="900">
+  <img src="assets/MediRoute-ss2.png" alt="MediRoute hospital recommendation with map" width="900">
 </p>
 
-## 🔁 Agent workflow
+### MediPilot
 
 <p align="center">
-  <img src="assets/workflow.png" alt="ERoute agent workflow" width="100%">
+  <img src="assets/MediPilot-ss1.png" alt="MediPilot knowledge sources screen" width="900">
+</p>
+
+<p align="center">
+  <img src="assets/MediPilot-ss2.png" alt="MediPilot source-grounded assistant screen" width="900">
+</p>
+
+## 🔁 Agent workflows
+
+### MediRoute workflow
+
+<p align="center">
+  <img src="assets/MediRoute-Workflow.png" alt="MediRoute agent workflow" width="100%">
 </p>
 
 | Stage | Responsibility |
@@ -80,6 +90,12 @@ documents do not support an answer.
 | **4. Resource filtering** | Keep hospitals that satisfy every required resource |
 | **5. Route calculation** | Google Routes API estimates driving distance and time |
 | **6. Recommendation** | Return the quickest suitable hospital and alternatives |
+
+### MediPilot workflow
+
+<p align="center">
+  <img src="assets/MediPilot-Workflow.png" alt="MediPilot retrieval workflow" width="100%">
+</p>
 
 ## 🧩 Architecture
 
